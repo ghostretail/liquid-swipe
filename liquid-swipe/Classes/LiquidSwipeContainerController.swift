@@ -1,9 +1,5 @@
-//
-//  LiquidSwipeContainerController.swift
-//  liquid-swipe
-//
-//  Created by Anton Skopin on 28/12/2018.
-//  Copyright © 2018 cuberto. All rights reserved.
+//  GhostSwipeContainerController.swift
+//  Copyright © GhostRetail Inc. All rights reserved.
 //
 
 import UIKit
@@ -26,6 +22,7 @@ open class LiquidSwipeContainerController: UIViewController {
             configureInitialState()
         }
     }
+    public var locked: Bool = false
     public var delegate: LiquidSwipeContainerDelegate?
     public private(set) var currentPageIndex: Int = 0
     private var currentPage: UIView? {
@@ -34,11 +31,12 @@ open class LiquidSwipeContainerController: UIViewController {
     private var currentViewController: UIViewController?
     private var nextViewController: UIViewController?
     private var previousViewController: UIViewController?
-    public var btnNext: UIButton = {
+    private var btnNext: UIButton = {
         let button = UIButton()
         button.translatesAutoresizingMaskIntoConstraints = false
         button.backgroundColor = .clear
         button.setImage(UIImage(named: "btnNext.png", in: Bundle.resourseBundle, compatibleWith: nil), for: .normal)
+        button.isUserInteractionEnabled = true
         return button
     }()
     
@@ -51,14 +49,9 @@ open class LiquidSwipeContainerController: UIViewController {
     private var maxVertRadius: CGFloat {
         return view.bounds.height * 0.9
     }
-    private var initialSideWidth: CGFloat {
-        if #available(iOS 11.0, *) {
-            return 15.0 + view.safeAreaInsets.right
-        }
-        return 15.0
-    }
+    private var initialSideWidth: CGFloat = 0.0
     private var initialWaveCenter: CGFloat  {
-        return view.bounds.height * 0.7167487685
+        return view.bounds.height * 0.1267487685
     }
     private var animationStartTime: CFTimeInterval?
     private var animating: Bool = false
@@ -70,8 +63,10 @@ open class LiquidSwipeContainerController: UIViewController {
     private var csBtnNextLeading: NSLayoutConstraint?
     private var csBtnNextCenterY: NSLayoutConstraint?
     
+    private var progressCounter: CGFloat = 1.0
+    
     override open var preferredStatusBarStyle: UIStatusBarStyle {
-        return currentViewController?.preferredStatusBarStyle ?? .default
+        return currentViewController?.preferredStatusBarStyle ?? .lightContent
     }
     
     override open func viewDidLoad() {
@@ -79,11 +74,19 @@ open class LiquidSwipeContainerController: UIViewController {
         configureBtnNext()
         configureGestures()
         configureInitialState()
+        
+        print("ViewController currentViewController", currentViewController)
+        print("ViewController nextViewController", nextViewController)
+        print("ViewController previousViewController", previousViewController)
+        
+        //Remote Control Notifier
+        NotificationCenter.default.addObserver(self, selector: #selector(btnTapped(_:)), name: Notification.Name("openMenu"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(closeMenu(_:)), name: Notification.Name("closeMenu"), object: nil)
     }
     
     private func configureBtnNext() {
         view.addSubview(btnNext)
-        csBtnNextLeading = btnNext.leadingAnchor.constraint(equalTo: view.trailingAnchor, constant: -(initialHorRadius + initialSideWidth) + 8.0)
+        csBtnNextLeading = btnNext.leadingAnchor.constraint(equalTo: view.trailingAnchor, constant: -(initialHorRadius + initialSideWidth) - 3.0)
         csBtnNextLeading?.isActive = true
         csBtnNextCenterY = btnNext.centerYAnchor.constraint(equalTo: view.topAnchor, constant: initialWaveCenter)
         csBtnNextCenterY?.isActive = true
@@ -123,9 +126,11 @@ open class LiquidSwipeContainerController: UIViewController {
         guard let mask = view.layer.mask as? WaveLayer else {
             return
         }
+        
         if let centerY = waveCenterY {
             mask.waveCenterY = centerY
         }
+        
         mask.sideWidth = sideWidth(forProgress: progress)
         mask.waveHorRadius = waveHorRadiusBack(forProgress: progress)
         mask.waveVertRadius = waveVertRadius(forProgress: progress)
@@ -137,7 +142,12 @@ open class LiquidSwipeContainerController: UIViewController {
     private var shouldFinish: Bool = false
     private var shouldCancel: Bool = false
     private var animationProgress: CGFloat = 0.0
+    
     @objc private func rightEdgePan(_ sender: UIPanGestureRecognizer) {
+        if locked {
+            return
+        }
+        
         guard !animating else {
             return
         }
@@ -171,7 +181,7 @@ open class LiquidSwipeContainerController: UIViewController {
                     case .began, .changed:
                         return true
                     default:
-                        if progress >= 0.15 {
+                        if progress >= 0.01 {
                             self.shouldFinish = true
                             self.shouldCancel = false
                             self.animationStartTime = CACurrentMediaTime() - CFTimeInterval(CGFloat(self.duration) * progress)
@@ -211,15 +221,15 @@ open class LiquidSwipeContainerController: UIViewController {
                         self.delegate?.liquidSwipeContainer(self, didFinishTransitionTo: viewController, transitionCompleted: false)
                 }
             }
-            if let mask = nextViewController?.view?.layer.mask as? WaveLayer {
-                mask.frame = self.view.bounds
-                mask.updatePath()
-            }
             currentPage?.pop_add(animation, forKey: "animation")
         }
     }
     
     @objc private func leftEdgePan(_ sender: UIPanGestureRecognizer) {
+        if locked {
+            return
+        }
+        
         guard !animating else {
             return
         }
@@ -254,7 +264,7 @@ open class LiquidSwipeContainerController: UIViewController {
                     case .began, .changed:
                         return true
                     default:
-                        if progress <= 0.6 {
+                        if progress <= 0.99 {
                             self.shouldFinish = true
                             self.shouldCancel = false
                             self.animationProgress = progress
@@ -291,13 +301,8 @@ open class LiquidSwipeContainerController: UIViewController {
                 }
                 if self.shouldCancel,
                     let viewController = self.previousViewController {
-                    viewController.view.isHidden = true
                     self.delegate?.liquidSwipeContainer(self, didFinishTransitionTo: viewController, transitionCompleted: false)
                 }
-            }
-            if let mask = previousViewController?.view?.layer.mask as? WaveLayer {
-                mask.frame = self.view.bounds
-                mask.updatePath()
             }
             previousViewController?.view.pop_add(previousViewAnimation, forKey: "animation")
             guard nextViewController != nil else {
@@ -385,10 +390,12 @@ open class LiquidSwipeContainerController: UIViewController {
         guard let firstPage = firstVC.view else {
             return
         }
+
         view.addSubview(firstPage)
         layoutPageView(firstPage)
 
-        if pagesCount > 1 {
+
+        if pagesCount >= 1 {
             let maskLayer = WaveLayer(waveCenterY: initialWaveCenter, waveHorRadius: initialHorRadius, waveVertRadius: initialVertRadius, sideWidth: initialSideWidth)
             apply(mask: maskLayer, on: firstPage)
         }
@@ -500,26 +507,22 @@ open class LiquidSwipeContainerController: UIViewController {
             return
         }
         let pagesCount = datasource.numberOfControllersInLiquidSwipeContainer(self)
-        guard pagesCount > currentPageIndex + 1 else {
+        guard pagesCount >= 1 else {
             nextViewController = nil
             rightEdgeGesture.isEnabled = false
             return
         }
-        let nextVC = datasource.liquidSwipeContainer(self, viewControllerAtIndex: currentPageIndex + 1)
-        nextViewController = nextVC
-        guard let page = nextVC.view else {
-            return
-        }
-        if let mask = page.layer.mask as? WaveLayer {
-            mask.frame = view.bounds
-            mask.updatePath()
-        }
-        if let currentPage = currentPage {
-            view.insertSubview(page, belowSubview: currentPage)
-        } else {
-            view.addSubview(page)
-        }
-        layoutPageView(page)
+//        let nextVC = datasource.liquidSwipeContainer(self, viewControllerAtIndex: currentPageIndex)
+//        nextViewController = nextVC
+//        guard let page = nextVC.view else {
+//            return
+//        }
+//        if let currentPage = currentPage {
+//            view.insertSubview(page, belowSubview: currentPage)
+//        } else {
+//            view.addSubview(page)
+//        }
+//        layoutPageView(page)
     }
     
     private func configurePreviousPage() {
@@ -537,10 +540,6 @@ open class LiquidSwipeContainerController: UIViewController {
         guard let page = previousVC.view else {
             return
         }
-        if let mask = page.layer.mask as? WaveLayer {
-            mask.frame = view.bounds
-            mask.updatePath()
-        }
         if let currentPage = currentPage {
             view.insertSubview(page, aboveSubview: currentPage)
         } else {
@@ -551,12 +550,28 @@ open class LiquidSwipeContainerController: UIViewController {
     }
     
     private func apply(mask: WaveLayer, on view: UIView) {
-        mask.frame = self.view.bounds
+        mask.frame = view.bounds
         mask.updatePath()
         view.layer.mask = mask
     }
     
+    func close() {
+        if locked {
+            return
+        }
+        
+        animationStartTime = CACurrentMediaTime()
+        guard !animating else {
+            return
+        }
+        animating = true
+    }
+    
     @objc private func btnTapped(_ sender: AnyObject) {
+        if locked {
+            return
+        }
+        
         animationStartTime = CACurrentMediaTime()
         guard !animating else {
             return
@@ -583,50 +598,87 @@ open class LiquidSwipeContainerController: UIViewController {
         currentPage?.pop_add(animation, forKey: "animation")
     }
     
-    override open func viewSafeAreaInsetsDidChange() {
-        if let mask = self.currentPage?.layer.mask as? WaveLayer {
-            if mask.sideWidth > 0 {
-                mask.sideWidth = initialSideWidth
-                mask.updatePath()
-                csBtnNextLeading?.constant = -(mask.waveHorRadius + mask.sideWidth - 8.0)
-                view.layoutIfNeeded()
-            }
+    @objc private func closeMenu(_ sender: AnyObject) {
+        
+        print("triggering menu close")
+        
+         if locked {
+            return
         }
         
+        print("continue phase 1")
+        
+        guard !animating else {
+            return
+        }
+        
+        shouldCancel = false
+        shouldFinish = false
+        animating = true
+        previousViewController?.view.isHidden = false
+        
+        if let viewController = previousViewController {
+            delegate?.liquidSwipeContainer(self, willTransitionTo: viewController)
+        }
+        
+        let previousViewAnimation = POPCustomAnimation {[weak sender] (target, animation) -> Bool in
+            
+            guard let view = target as? UIView,
+                let mask = view.layer.mask as? WaveLayer,
+                let time = animation?.elapsedTime else {
+                    if let nextViewController = self.nextViewController {
+                        self.delegate?.liquidSwipeContainer(self, didFinishTransitionTo: nextViewController, transitionCompleted: false)
+                    }
+                    return false
+            }
+            
+            //Vars
+            let speed: CGFloat = 2000
+            let direction: CGFloat = -1
+            let distance = min(CGFloat(time) * speed, abs(mask.waveCenterY - 10))
+            let centerY = mask.waveCenterY + distance * direction
+            let change = 150
+            let maxChange: CGFloat = self.view.bounds.width * (1.0/0.45)
+            
+            self.progressCounter = self.progressCounter - 0.03
+            let progress = self.progressCounter
+            self.animateBack(view: view, forProgress: CGFloat(progress), waveCenterY: centerY)
+            self.shouldFinish = true
+            self.shouldCancel = false
+            self.animationProgress = CGFloat(progress)
+            self.animationStartTime = CACurrentMediaTime()
+           
+            
+            let cTime = (animation?.currentTime ?? CACurrentMediaTime()) - (self.animationStartTime ?? CACurrentMediaTime())
+            if self.shouldFinish {
+                let progress = self.animationProgress - CGFloat(cTime/self.duration)
+                let direction: CGFloat = (self.initialWaveCenter - mask.waveCenterY).sign == .plus ? 1 : -1
+                let distance = min(CGFloat(time) * speed, abs(self.initialWaveCenter - mask.waveCenterY))
+                let centerY = mask.waveCenterY + distance * direction
+                self.animateBack(view: view, forProgress: progress, waveCenterY: centerY)
+                self.animating = progress >= 0 || abs(self.initialWaveCenter - mask.waveCenterY) > 0.01
+                return self.animating
+            } else if self.shouldCancel {
+                let progress = CGFloat(cTime/self.duration)
+                self.animateBack(view: view, forProgress: progress)
+                self.animating = progress <= 1.0
+                return self.animating
+            } else {
+                return false
+            }
+        }
+        previousViewAnimation?.completionBlock = { (animation, isFinished) in
+            print("animation complete")
+            self.animating = false
+            self.progressCounter = 1.0
+            if self.shouldFinish {
+                self.showPreviousPage()
+            }
+        }
+        previousViewController?.view.pop_add(previousViewAnimation, forKey: "animation")
+  
     }
     
-    override open func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
-        let btnNextWasHidden = btnNext.isHidden
-        btnNext.isHidden = true
-        currentPage?.layer.mask = nil
-        previousViewController?.view?.layer.mask = nil
-        nextViewController?.view?.layer.mask = nil
-        
-        coordinator.animate(alongsideTransition: { (_) in
-        }) { (_) in
-            if let currentPage = self.currentPage {
-                let hasNextPage = self.nextViewController != nil
-                let maskLayer = WaveLayer(waveCenterY: self.initialWaveCenter,
-                                          waveHorRadius: hasNextPage ? self.initialHorRadius : 0,
-                                          waveVertRadius: self.initialVertRadius, sideWidth: hasNextPage ?self.initialSideWidth : 0)
-                self.apply(mask: maskLayer, on: currentPage)
-            }
-            if let nextPage = self.nextViewController?.view {
-                let maskLayer = WaveLayer(waveCenterY: self.initialWaveCenter, waveHorRadius: 0, waveVertRadius: self.initialVertRadius, sideWidth: 0)
-                self.apply(mask: maskLayer, on: nextPage)
-            }
-            if let prevPage = self.previousViewController?.view {
-                let maskLayer = WaveLayer(waveCenterY: self.initialWaveCenter, waveHorRadius: 0, waveVertRadius: self.initialVertRadius, sideWidth: prevPage.bounds.height)
-                self.apply(mask: maskLayer, on: prevPage)
-            }
-            self.csBtnNextCenterY?.constant = self.initialWaveCenter
-            self.csBtnNextLeading?.constant = -(self.initialHorRadius + self.initialSideWidth - 8.0)
-            self.btnNext.isHidden = btnNextWasHidden
-            self.btnNext.transform = CGAffineTransform.identity
-            self.view.layoutIfNeeded()
-        }
-        super.viewWillTransition(to: size, with: coordinator)
-    }
 }
 
 //MARK: Animation helpers
@@ -713,3 +765,4 @@ private extension LiquidSwipeContainerController {
         return initialSideWidth + (view.bounds.width - initialSideWidth) * (progress - p1)/(p2 - p1)
     }
 }
+
